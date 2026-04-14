@@ -234,7 +234,7 @@ def train_model(train_size):
      # Выводим прогресс каждые 100 эпох
         if epoch % 100 == 0:
             print(f"Размер данных: {train_size}, Эпоха {epoch}, Потери: {loss.item():.4f}")
-   
+        return model
 # 9. Генерация тестовых данных и проверка
 def test_model(model):
     print("\n--- Тестирование модели ---")
