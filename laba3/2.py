@@ -1,307 +1,436 @@
-'''Задание
-Обучите модель нейросети, выводя промежуточные данные: номер эпохи, точность на тренировочных данных, точность на тестовых данных. 
-Примечание: лучшие результаты сохраняйте в файл.
-В LSTM-слое установите параметр lstm_layers равным 4. Как изменился результат обучения в плане точности и скорости?'''
+"""
+ОБУЧЕНИЕ НЕЙРОСЕТИ ДЛЯ АНАЛИЗА ТОНАЛЬНОСТИ ОТЗЫВОВ С 4 СЛОЯМИ LSTM
+Задание: Обучите модель нейросети, выводя промежуточные данные: 
+         номер эпохи, точность на тренировочных данных, точность на тестовых данных.
+         Лучшие результаты сохраняйте в файл.
+         В LSTM-слое установите параметр lstm_layers равным 4.Как изменился результат обучения в плане точности и скорости?
+"""
 
-'''Задание
-Обучите модель нейросети, выводя промежуточные данные: номер эпохи, точность на тренировочных данных, точность на тестовых данных. 
-Примечание: лучшие результаты сохраняйте в файл.
-В LSTM-слое установите параметр lstm_layers равным 4. Как изменился результат обучения в плане точности и скорости?'''
-
-# ==================== ИМПОРТ БИБЛИОТЕК ====================
-
+# Импорт необходимых библиотек
 import torch  # Основная библиотека PyTorch для работы с тензорами и нейросетями
-import torch.nn as nn  # Модуль для создания слоев нейросети (Linear, LSTM, Embedding и т.д.)
+import torch.nn as nn  # Модуль для создания слоев нейронной сети (Linear, LSTM, Embedding и т.д.)
 import torch.optim as optim  # Модуль с оптимизаторами (Adam, SGD) для обновления весов
-import pandas as pd  # Библиотека для работы с данными в формате DataFrame (чтение CSV)
-import numpy as np  # Библиотека для работы с многомерными массивами и математическими операциями
-from collections import Counter  # Класс для подсчета частоты элементов (для построения словаря)
+import pandas as pd  # Библиотека для работы с данными в формате таблиц (CSV)
+import numpy as np  # Библиотека для научных вычислений и работы с массивами
+from collections import Counter  # Класс для подсчета частоты элементов (создание словаря)
 from torch.utils.data import Dataset, DataLoader, TensorDataset  # Инструменты для загрузки данных батчами
 import time  # Модуль для измерения времени выполнения операций
 
-# ==================== ЗАГРУЗКА ДАННЫХ ====================
+# ======================== ЗАГРУЗКА И ПОДГОТОВКА ДАННЫХ ========================
 
-data = pd.read_csv("reviews_preprocessed.csv")  # Загружаем предварительно обработанные отзывы в DataFrame
+# Загружаем предварительно обработанные отзывы из CSV файла
+# Файл содержит два столбца: 'processed' (обработанный текст) и 'label' (метка: 1 - позитив, 0 - негатив)
+data = pd.read_csv("reviews_preprocessed.csv")
 
-# ==================== ПОСТРОЕНИЕ СЛОВАРЯ ====================
+# Объединяем все обработанные отзывы в одну строку, разделяем на слова, создаем список всех слов
+# data.processed.values - извлекаем все значения из столбца 'processed' в виде массива NumPy
+# " ".join(...) - склеиваем все отзывы через пробел
+# .split() - разбиваем на отдельные слова по пробелам
+all_words = " ".join(data.processed.values).split()
 
-all_words = " ".join(data.processed.values).split()  # Объединяем все отзывы в одну строку и разбиваем на слова
-counter = Counter(all_words)  # Создаем счетчик, который подсчитывает частоту каждого слова в корпусе
+# Создаем счетчик частоты встречаемости каждого слова
+# Counter подсчитывает, сколько раз каждое слово встречается во всех отзывах
+counter = Counter(all_words)
 
-vocabulary = sorted(counter, key=counter.get, reverse=True)  # Сортируем слова по частоте (от самых частых к редким)
+# Создаем словарь: сортируем слова по убыванию частоты (от самых частых к редким)
+# sorted() - сортирует элементы, key=counter.get - сортируем по значению частоты
+# reverse=True - по убыванию (самые частые слова в начале)
+vocabulary = sorted(counter, key=counter.get, reverse=True)
 
-int2word = dict(enumerate(vocabulary, 1))  # Создаем словарь: индекс -> слово (начинаем с 1, т.к. 0 зарезервирован)
-int2word[0] = "PAD"  # Добавляем специальный токен PAD (padding) для выравнивания последовательностей
+# Создаем отображение: индекс -> слово
+# enumerate(vocabulary, 1) - нумеруем слова начиная с 1 (0 зарезервируем для PAD - заполнителя)
+# dict() - преобразуем в словарь, где ключ - индекс, значение - слово
+int2word = dict(enumerate(vocabulary, 1))
 
-word2int = {word: id for id, word in int2word.items()}  # Создаем обратный словарь: слово -> индекс
+# Добавляем специальный токен PAD (padding) под индексом 0
+# PAD используется для выравнивания последовательностей разной длины до одинаковой
+int2word[0] = "PAD"
 
-# ==================== КОДИРОВАНИЕ ОТЗЫВОВ ====================
+# Создаем обратное отображение: слово -> индекс
+# Для каждого слова (word) и его индекса (id) в словаре int2word.items()
+word2int = {word: id for id, word in int2word.items()}
 
-reviews = data.processed.values  # Извлекаем все обработанные тексты отзывов в виде массива
-all_words = " ".join(reviews).split()  # Еще раз объединяем все слова для проверки (можно было не повторять)
+# Получаем массив всех обработанных отзывов
+reviews = data.processed.values
 
-# Преобразуем каждый отзыв из слов в числа (индексы) с помощью словаря word2int
+# Снова создаем список всех слов (для проверки или дополнительных операций)
+all_words = " ".join(reviews).split()
+
+# Кодируем каждый отзыв: заменяем слова на их числовые индексы
+# Для каждого отзыва (review) в списке reviews:
+#   review.split() - разбиваем отзыв на слова
+#   [word2int[word] for word in review.split()] - заменяем каждое слово на его индекс
 review_enc = [[word2int[word] for word in review.split()] for review in reviews]
 
-# ==================== ПАДДИНГ (ВЫРАВНИВАНИЕ) ====================
+# Устанавливаем фиксированную длину последовательности для всех отзывов
+sequence_length = 256
 
-sequence_length = 256  # Фиксированная длина последовательности (все отзывы будут приведены к этой длине)
-
-# Создаем матрицу с размерами (количество отзывов, sequence_length), заполненную индексами PAD
+# Создаем матрицу для паддинга (выравнивания) - заполняем все токеном PAD
+# np.full(размеры, значение, тип) - создает массив, заполненный указанным значением
+# размеры: (количество отзывов, sequence_length)
 reviews_padding = np.full((len(review_enc), sequence_length), word2int['PAD'], dtype=int)
 
-# Заполняем матрицу: для каждого отзыва копируем его индексы в начало строки
-for i, row in enumerate(review_enc):  # Перебираем все закодированные отзывы
-    # Вставляем индексы отзыва, обрезая до sequence_length если он длиннее
+# Заполняем каждую строку реальными индексами слов
+# enumerate(review_enc) - перебираем отзывы с их индексами
+for i, row in enumerate(review_enc):
+    # Для i-го отзыва: берем первые sequence_length слов (обрезаем если длиннее)
+    # np.array(row)[:sequence_length] - преобразуем список в массив и обрезаем
     reviews_padding[i, :len(row)] = np.array(row)[:sequence_length]
 
-# ==================== ПОДГОТОВКА МЕТОК ====================
+# Извлекаем метки (целевые значения) как массив NumPy
+# 1 - положительный отзыв, 0 - отрицательный
+labels = data.label.to_numpy()
 
-labels = data.label.to_numpy()  # Преобразуем метки (0/1) в массив NumPy для удобства
+# ======================== РАЗБИЕНИЕ НА ОБУЧАЮЩУЮ, ВАЛИДАЦИОННУЮ И ТЕСТОВУЮ ВЫБОРКИ ========================
 
-# ==================== РАЗБИЕНИЕ НА ВЫБОРКИ ====================
+# Устанавливаем пропорции: 60% на обучение, 20% на валидацию, 20% на тестирование
+train_len = 0.6  # Доля обучающей выборки
+val_len = 0.2    # Доля валидационной выборки
 
-train_len = 0.6  # 60% данных для обучения
-val_len = 0.2    # 20% данных для валидации (проверки во время обучения)
-# Оставшиеся 20% пойдут на тестирование
+# Вычисляем индексы для разделения
+# int() - преобразуем в целое число (количество примеров)
+train_last_index = int(len(reviews_padding) * train_len)  # Конец обучающей выборки
+val_last_index = int(len(reviews_padding) * (train_len + val_len))  # Конец валидационной выборки
 
-train_last_index = int(len(reviews_padding) * train_len)  # Индекс конца обучающей выборки
-val_last_index = int(len(reviews_padding) * (train_len + val_len))  # Индекс конца валидационной выборки
+# Разделяем признаки (отзывы) на три части
+train_x = reviews_padding[:train_last_index]  # Обучающие отзывы
+val_x = reviews_padding[train_last_index:val_last_index]  # Валидационные отзывы
+test_x = reviews_padding[val_last_index:]  # Тестовые отзывы
 
-train_x = reviews_padding[:train_last_index]  # Обучающие признаки (первые 60%)
-train_y = labels[:train_last_index]  # Обучающие метки
+# Разделяем метки (цели) на три части
+train_y = labels[:train_last_index]  # Метки для обучения
+val_y = labels[train_last_index:val_last_index]  # Метки для валидации
+test_y = labels[val_last_index:]  # Метки для тестирования
 
-val_x = reviews_padding[train_last_index:val_last_index]  # Валидационные признаки (следующие 20%)
-val_y = labels[train_last_index:val_last_index]  # Валидационные метки
+# Выводим информацию о размерах выборок
+print(f"Train: {len(train_x)}, Validation: {len(val_x)}, Test: {len(test_x)}")
 
-test_x = reviews_padding[val_last_index:]  # Тестовые признаки (последние 20%)
-test_y = labels[val_last_index:]  # Тестовые метки
-
-print(f"Train: {len(train_x)}, Validation: {len(val_x)}, Test: {len(test_x)}")  # Выводим размеры выборок
-
-# ==================== СОЗДАНИЕ DATASET И DATALOADER ====================
-
-# Преобразуем NumPy массивы в тензоры PyTorch и упаковываем в TensorDataset
+# Создаем датасеты PyTorch из NumPy массивов
+# TensorDataset оборачивает тензоры в единый объект датасета
 train_dataset = TensorDataset(torch.from_numpy(train_x), torch.from_numpy(train_y))
 val_dataset = TensorDataset(torch.from_numpy(val_x), torch.from_numpy(val_y))
 test_dataset = TensorDataset(torch.from_numpy(test_x), torch.from_numpy(test_y))
 
-batch_size = 128  # Количество примеров в одном батче (чем больше, тем быстрее, но больше памяти)
+# Устанавливаем размер батча - сколько примеров обрабатывается за одну итерацию
+batch_size = 128
 
-# DataLoader загружает данные батчами, перемешивая для обучения (shuffle=True)
+# Создаем DataLoader для загрузки данных батчами
+# shuffle=True - перемешиваем данные на каждой эпохе (только для обучения)
 train_loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size)
 val_loader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size)  # Для валидации перемешивание не нужно
-test_loader = DataLoader(test_dataset, shuffle=False, batch_size=batch_size)  # Для тестирования тоже
+test_loader = DataLoader(test_dataset, shuffle=False, batch_size=batch_size)  # Для тестирования тоже не перемешиваем
 
-# ==================== ОПРЕДЕЛЕНИЕ МОДЕЛИ НЕЙРОСЕТИ ====================
+# ======================== ОПРЕДЕЛЕНИЕ АРХИТЕКТУРЫ НЕЙРОСЕТИ ========================
 
-class TextModel(nn.Module):  # Наследуемся от nn.Module - базового класса для всех нейросетей в PyTorch
+class TextModel(nn.Module):
+    """
+    Класс модели для анализа тональности текста с использованием LSTM
+    Архитектура: Embedding -> LSTM -> Dropout -> Linear -> Sigmoid
+    """
     def __init__(self, vocab_size, embedding_dim, hidden_dim, output_dim, n_layers, dropout=0.3):
         """
         Конструктор модели
-        vocab_size: размер словаря (количество уникальных слов)
-        embedding_dim: размерность векторного представления слова (100)
-        hidden_dim: размерность скрытого состояния LSTM (256)
-        output_dim: размерность выхода (1 для бинарной классификации)
-        n_layers: количество слоев LSTM (4 по заданию)
-        dropout: вероятность отключения нейронов для регуляризации (0.3)
+        
+        Параметры:
+        - vocab_size: размер словаря (количество уникальных слов)
+        - embedding_dim: размерность векторного представления слов (word embeddings)
+        - hidden_dim: размерность скрытого состояния LSTM
+        - output_dim: размерность выхода (1 для бинарной классификации)
+        - n_layers: количество слоев LSTM (по заданию = 4)
+        - dropout: вероятность обнуления нейронов для регуляризации
         """
         super(TextModel, self).__init__()  # Вызываем конструктор родительского класса
         
-        # Слой Embedding преобразует индексы слов в плотные векторные представления
-        # padding_idx=0 означает, что индекс 0 (PAD) игнорируется и всегда будет нулевым вектором
+        # Слой встраивания слов: преобразует индексы слов в плотные векторы
+        # padding_idx=0 - указывает, что индекс 0 (PAD) должен игнорироваться
         self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
         
-        # LSTM слой - основа рекуррентной нейросети
-        # batch_first=True означает, что вход имеет форму (batch, sequence, features)
-        # dropout применяется только если n_layers > 1
+        # LSTM слой (Long Short-Term Memory) для обработки последовательностей
+        # embedding_dim - размер входа (векторы слов)
+        # hidden_dim - размер скрытого состояния
+        # n_layers - количество слоев LSTM (по заданию = 4)
+        # batch_first=True - входной тензор имеет форму (batch, seq_len, features)
+        # dropout - применяется между слоями LSTM (только если n_layers > 1)
         self.lstm = nn.LSTM(embedding_dim, hidden_dim, n_layers, 
                            batch_first=True, dropout=dropout if n_layers > 1 else 0)
         
-        self.dropout = nn.Dropout(dropout)  # Слой регуляризации (случайно обнуляет нейроны)
-        self.fc = nn.Linear(hidden_dim, output_dim)  # Полносвязный слой для классификации
-        self.sigmoid = nn.Sigmoid()  # Сигмоидная функция для получения вероятности (0-1)
+        # Dropout слой для предотвращения переобучения
+        self.dropout = nn.Dropout(dropout)
+        
+        # Полносвязный слой для классификации: hidden_dim -> output_dim (1)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+        
+        # Сигмоидная функция активации для получения вероятности (от 0 до 1)
+        self.sigmoid = nn.Sigmoid()
         
     def forward(self, text, text_lengths):
         """
         Прямой проход модели
-        text: тензор с индексами слов (batch, sequence_length)
-        text_lengths: реальные длины отзывов (без учета PAD)
-        """
-        embedded = self.embedding(text)  # Преобразуем индексы в эмбеддинги (batch, seq, embed_dim)
         
-        # Упаковываем последовательность, чтобы LSTM игнорировала PAD токены
-        # Это ускоряет обучение и улучшает качество
+        Параметры:
+        - text: входной тензор индексов слов (batch_size, sequence_length)
+        - text_lengths: реальные длины последовательностей (без учета PAD)
+        
+        Возвращает:
+        - predictions: вероятности принадлежности к положительному классу (0..1)
+        """
+        # Преобразуем индексы в embedding векторы (batch_size, seq_len, embedding_dim)
+        embedded = self.embedding(text)
+        
+        # Упаковываем последовательность для эффективной обработки LSTM
+        # Игнорируем PAD токены при расчетах
         packed_embedded = nn.utils.rnn.pack_padded_sequence(
             embedded, text_lengths.cpu(), batch_first=True, enforce_sorted=False
         )
         
         # Пропускаем через LSTM слой
+        # packed_output - упакованные выходы для каждого шага
+        # hidden - финальное скрытое состояние (n_layers, batch, hidden_dim)
+        # cell - финальное состояние ячейки (n_layers, batch, hidden_dim)
         packed_output, (hidden, cell) = self.lstm(packed_embedded)
         
-        # Берем последнее скрытое состояние последнего слоя
-        # hidden имеет форму (n_layers, batch, hidden_dim)
-        hidden_last = hidden[-1, :, :]  # Берем последний слой (batch, hidden_dim)
+        # Берем последний слой скрытого состояния (последний элемент по оси слоев)
+        # hidden[-1, :, :] - (batch_size, hidden_dim)
+        hidden_last = hidden[-1, :, :]
         
-        dropped = self.dropout(hidden_last)  # Применяем dropout для регуляризации
-        output = self.fc(dropped)  # Полносвязный слой -> (batch, 1)
-        predictions = self.sigmoid(output)  # Сигмоид -> вероятность положительного класса
+        # Применяем dropout для регуляризации
+        dropped = self.dropout(hidden_last)
+        
+        # Полносвязный слой для классификации
+        output = self.fc(dropped)
+        
+        # Применяем сигмоиду для получения вероятности
+        predictions = self.sigmoid(output)
         return predictions
 
-# ==================== СОЗДАНИЕ МОДЕЛИ ====================
 
 def create_model(vocab_size, embedding_dim=100, hidden_dim=256, output_dim=1, n_layers=4, dropout=0.3):
     """
-    Функция для создания модели с параметрами по умолчанию
-    n_layers=4 - это параметр lstm_layers из задания (установлен в 4)
+    Фабричная функция для создания модели
+    
+    Возвращает экземпляр TextModel с указанными параметрами
     """
     model = TextModel(vocab_size, embedding_dim, hidden_dim, output_dim, n_layers, dropout)
     return model
 
-vocab_size = len(word2int)  # Размер словаря (количество уникальных слов + PAD)
-model = create_model(vocab_size, n_layers=4)  # Создаем модель с 4 слоями LSTM (по заданию)
 
-# Подсчитываем количество обучаемых параметров модели
+# Размер словаря (количество уникальных слов + PAD токен)
+vocab_size = len(word2int)
+
+# Создаем модель с 4 слоями LSTM (согласно заданию)
+model = create_model(vocab_size, n_layers=4)
+
+# Выводим информацию о модели
+# sum(p.numel() for p in model.parameters()) - считаем общее количество параметров
 print(f"Количество параметров модели: {sum(p.numel() for p in model.parameters()):,}")
-print(f"Количество слоев LSTM: 4")  # Подтверждаем, что используем 4 слоя
+print(f"Количество слоев LSTM: 4")
 
-# ==================== НАСТРОЙКА ОБУЧЕНИЯ ====================
+# ======================== НАСТРОЙКА ФУНКЦИИ ПОТЕРЬ И ОПТИМИЗАТОРА ========================
 
-criterion = nn.BCELoss()  # Бинарная кросс-энтропия - функция потерь для бинарной классификации
-optimizer = optim.Adam(model.parameters(), lr=0.001)  # Оптимизатор Adam с learning rate 0.001
+# Функция потерь: Binary Cross Entropy (для бинарной классификации)
+criterion = nn.BCELoss()
+
+# Оптимизатор Adam (адаптивный метод оптимизации)
+# lr (learning rate) = 0.001 - скорость обучения
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
 
 def accuracy(predictions, labels):
     """
-    Функция для вычисления точности (accuracy)
-    predictions: вероятности от 0 до 1
-    labels: истинные метки (0 или 1)
+    Функция для вычисления точности классификации
+    
+    Параметры:
+    - predictions: предсказанные вероятности (тензор PyTorch)
+    - labels: истинные метки (тензор PyTorch)
+    
+    Возвращает: точность (доля правильных ответов)
     """
-    rounded_preds = torch.round(predictions)  # Округляем вероятности до 0 или 1 (округление >0.5 дает 1)
-    correct = (rounded_preds == labels).float()  # Сравниваем с истинными метками, преобразуем в float (1 если верно)
-    return correct.sum() / len(correct)  # Доля правильных ответов
-
-model_path = './best_model_lstm4.pth'  # Путь для сохранения лучшей модели
-best_val_loss = float('inf')  # Инициализируем лучшую потерю как бесконечность
-best_val_acc = 0  # Инициализируем лучшую точность как 0
-
-start_time = time.time()  # Засекаем время начала обучения
-
-# ==================== ЦИКЛ ОБУЧЕНИЯ ====================
-
-for epoch in range(5):  # 5 эпох (полных проходов по всем данным)
-    # ---------- ФАЗА ОБУЧЕНИЯ ----------
-    model.train()  # Переключаем модель в режим обучения (включаем dropout, batch norm)
-    train_loss = 0  # Суммарная потеря за эпоху
-    train_acc = 0   # Суммарная точность за эпоху
+    # Округляем вероятности до 0 или 1 (порог 0.5)
+    # torch.round() - значения <0.5 -> 0, >=0.5 -> 1
+    rounded_preds = torch.round(predictions)
     
-    for batch_x, batch_y in train_loader:  # Проходим по всем батчам обучающей выборки
-        batch_x = batch_x.long()  # Преобразуем в тип long (целые числа) для Embedding слоя
-        batch_y = batch_y.float().unsqueeze(1)  # Преобразуем в float и добавляем размерность (batch, 1)
-        
-        # Вычисляем реальные длины отзывов (количество не-PAD токенов)
-        lengths = (batch_x != word2int['PAD']).sum(dim=1)  # Суммируем где токен не равен PAD
-        lengths = torch.clamp(lengths, min=1)  # Ограничиваем минимальную длину 1 (чтобы не было пустых последовательностей)
-        
-        optimizer.zero_grad()  # Обнуляем градиенты (накапливаемые из предыдущего батча)
-        predictions = model(batch_x, lengths)  # Прямой проход: получаем предсказания модели
-        loss = criterion(predictions, batch_y)  # Вычисляем функцию потерь (разница между предсказанием и истиной)
-        
-        loss.backward()  # Обратный проход: вычисляем градиенты для всех параметров модели
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5)  # Обрезаем градиенты для устойчивости
-        optimizer.step()  # Обновляем веса модели с помощью оптимизатора
-        
-        acc = accuracy(predictions, batch_y)  # Вычисляем точность на текущем батче
-        train_loss += loss.item()  # Добавляем потерю текущего батча к общей
-        train_acc += acc.item()    # Добавляем точность текущего батча к общей
+    # Сравниваем с истинными метками, преобразуем в float (True->1, False->0)
+    correct = (rounded_preds == labels).float()
     
-    # Усредняем потерю и точность за эпоху
+    # Возвращаем долю правильных ответов
+    return correct.sum() / len(correct)
+
+
+# ======================== ОБУЧЕНИЕ МОДЕЛИ ========================
+
+# Путь для сохранения лучшей модели
+model_path = './best_model_lstm4.pth'
+
+# Переменные для отслеживания лучшей модели
+best_val_loss = float('inf')  # Наименьшая ошибка на валидации (пока бесконечность)
+best_val_acc = 0  # Наибольшая точность на валидации
+
+# Засекаем время начала обучения
+start_time = time.time()
+
+# Обучаем модель в течение 5 эпох
+for epoch in range(5):
+    # ========== ФАЗА ОБУЧЕНИЯ ==========
+    model.train()  # Переводим модель в режим обучения (включен dropout)
+    train_loss = 0  # Суммарная ошибка на эпохе
+    train_acc = 0   # Суммарная точность на эпохе
+    
+    # Итерация по батчам обучающей выборки
+    for batch_x, batch_y in train_loader:
+        # Преобразуем индексы в тип long (целые числа)
+        batch_x = batch_x.long()
+        # Преобразуем метки в float и добавляем размерность (batch_size, 1)
+        batch_y = batch_y.float().unsqueeze(1)
+        
+        # Вычисляем реальные длины последовательностей (количество ненулевых слов, не PAD)
+        # (batch_x != word2int['PAD']) - маска: True для реальных слов, False для PAD
+        # .sum(dim=1) - суммируем по оси последовательности
+        lengths = (batch_x != word2int['PAD']).sum(dim=1)
+        # Гарантируем, что длина хотя бы 1 (чтобы избежать ошибок)
+        lengths = torch.clamp(lengths, min=1)
+        
+        # Обнуляем градиенты (накапливаемые с предыдущего батча)
+        optimizer.zero_grad()
+        
+        # Прямой проход: получаем предсказания модели
+        predictions = model(batch_x, lengths)
+        
+        # Вычисляем ошибку (loss) между предсказаниями и истинными метками
+        loss = criterion(predictions, batch_y)
+        
+        # Обратный проход: вычисляем градиенты
+        loss.backward()
+        
+        # Обрезаем градиенты для предотвращения взрыва градиентов
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5)
+        
+        # Обновляем веса модели с помощью оптимизатора
+        optimizer.step()
+        
+        # Вычисляем точность на текущем батче
+        acc = accuracy(predictions, batch_y)
+        
+        # Накопливаем ошибку и точность для усреднения
+        train_loss += loss.item()
+        train_acc += acc.item()
+    
+    # Усредняем ошибку и точность по всем батчам
     avg_train_loss = train_loss / len(train_loader)
     avg_train_acc = train_acc / len(train_loader)
     
-    # ---------- ФАЗА ВАЛИДАЦИИ ----------
-    model.eval()  # Переключаем модель в режим оценки (отключаем dropout)
+    # ========== ФАЗА ВАЛИДАЦИИ ==========
+    model.eval()  # Переводим модель в режим оценки (dropout отключается)
     val_loss = 0
     val_acc = 0
     
-    with torch.no_grad():  # Отключаем вычисление градиентов (экономит память и ускоряет)
+    # Отключаем вычисление градиентов (экономит память и ускоряет)
+    with torch.no_grad():
         for batch_x, batch_y in val_loader:
             batch_x = batch_x.long()
             batch_y = batch_y.float().unsqueeze(1)
             
+            # Вычисляем длины последовательностей
             lengths = (batch_x != word2int['PAD']).sum(dim=1)
             lengths = torch.clamp(lengths, min=1)
             
-            predictions = model(batch_x, lengths)  # Только forward pass (без backward)
+            # Получаем предсказания (без вычисления градиентов)
+            predictions = model(batch_x, lengths)
+            
+            # Вычисляем ошибку
             loss = criterion(predictions, batch_y)
+            
+            # Вычисляем точность
             acc = accuracy(predictions, batch_y)
             
+            # Накопливаем значения
             val_loss += loss.item()
             val_acc += acc.item()
     
+    # Усредняем ошибку и точность на валидации
     avg_val_loss = val_loss / len(val_loader)
     avg_val_acc = val_acc / len(val_loader)
     
-    # ---------- СОХРАНЕНИЕ ЛУЧШЕЙ МОДЕЛИ ----------
-    if avg_val_acc > best_val_acc:  # Если точность на валидации улучшилась
-        best_val_acc = avg_val_acc  # Обновляем лучшую точность
-        best_val_loss = avg_val_loss  # Обновляем лучшую потерю
-        torch.save({  # Сохраняем состояние модели и метаинформацию
-            'epoch': epoch + 1,  # Номер эпохи (прибавляем 1 т.к. считаем с 0)
+    # Сохраняем лучшую модель по точности на валидации
+    if avg_val_acc > best_val_acc:
+        best_val_acc = avg_val_acc
+        best_val_loss = avg_val_loss
+        
+        # Сохраняем состояние модели и метаинформацию
+        torch.save({
+            'epoch': epoch + 1,  # Номер эпохи (с 1)
             'model_state_dict': model.state_dict(),  # Веса модели
             'val_acc': avg_val_acc,  # Точность на валидации
-            'val_loss': avg_val_loss  # Потеря на валидации
+            'val_loss': avg_val_loss  # Ошибка на валидации
         }, model_path)
-        print(f'✅ Эпоха {epoch+1}. Сохранена лучшая модель (Val Acc: {avg_val_acc:.4f}, Loss: {avg_val_loss:.4f})')
+        print(f' Эпоха {epoch+1}. Сохранена лучшая модель (Val Acc: {avg_val_acc:.4f}, Loss: {avg_val_loss:.4f})')
     
-    # Выводим результаты текущей эпохи
-    print(f'📊 Эпоха {epoch+1}: Train Acc = {avg_train_acc:.4f}, Train Loss = {avg_train_loss:.4f} | Val Acc = {avg_val_acc:.4f}, Val Loss = {avg_val_loss:.4f}')
+    # Выводим метрики для текущей эпохи (согласно заданию)
+    print(f' Эпоха {epoch+1}: Train Acc = {avg_train_acc:.4f}, Train Loss = {avg_train_loss:.4f} | Val Acc = {avg_val_acc:.4f}, Val Loss = {avg_val_loss:.4f}')
 
-# ==================== ТЕСТИРОВАНИЕ МОДЕЛИ ====================
+# Вычисляем общее время обучения
+training_time = time.time() - start_time
 
-training_time = time.time() - start_time  # Вычисляем общее время обучения
+# ======================== ТЕСТИРОВАНИЕ МОДЕЛИ ========================
 
 print("\n" + "="*50)
 print("ТЕСТИРОВАНИЕ ЛУЧШЕЙ МОДЕЛИ")
 print("="*50)
 
-checkpoint = torch.load(model_path)  # Загружаем сохраненную модель
-model.load_state_dict(checkpoint['model_state_dict'])  # Восстанавливаем веса лучшей модели
+# Загружаем сохраненную лучшую модель
+checkpoint = torch.load(model_path)
+model.load_state_dict(checkpoint['model_state_dict'])  # Загружаем веса
 print(f"Загружена модель с эпохи {checkpoint['epoch']}, Val Acc: {checkpoint['val_acc']:.4f}")
 
-model.eval()  # Включаем режим оценки
+# Переводим модель в режим оценки
+model.eval()
+
 test_loss = 0
 test_acc = 0
 
-with torch.no_grad():  # Отключаем градиенты
+# Отключаем вычисление градиентов для тестирования
+with torch.no_grad():
     for batch_x, batch_y in test_loader:
         batch_x = batch_x.long()
         batch_y = batch_y.float().unsqueeze(1)
         
+        # Вычисляем длины последовательностей
         lengths = (batch_x != word2int['PAD']).sum(dim=1)
         lengths = torch.clamp(lengths, min=1)
         
+        # Получаем предсказания
         predictions = model(batch_x, lengths)
+        
+        # Вычисляем ошибку и точность
         loss = criterion(predictions, batch_y)
         acc = accuracy(predictions, batch_y)
         
+        # Накопливаем значения
         test_loss += loss.item()
         test_acc += acc.item()
 
-avg_test_loss = test_loss / len(test_loader)  # Средняя потеря на тестовой выборке
-avg_test_acc = test_acc / len(test_loader)    # Средняя точность на тестовой выборке
+# Усредняем метрики на тестовой выборке
+avg_test_loss = test_loss / len(test_loader)
+avg_test_acc = test_acc / len(test_loader)
 
-# Выводим финальные результаты
-print(f"📊 Результаты на тестовой выборке:")
+# Выводим результаты тестирования
+print(f"Результаты на тестовой выборке:")
 print(f"   Test Accuracy = {avg_test_acc:.4f}")
 print(f"   Test Loss = {avg_test_loss:.4f}")
-print(f"\n⏱️ Общее время обучения: {training_time:.2f} секунд")
+print(f"\n Общее время обучения: {training_time:.2f} секунд")
 
-# ==================== ВЫВОДЫ ПО ЗАДАНИЮ ====================
-print("\n" + "="*50)
-print("ВЫВОДЫ ПО РЕЗУЛЬТАТАМ С 4 СЛОЯМИ LSTM")
-print("="*50)
-print("📌 Сравнение с 2 слоями LSTM:")
-print("   - Точность: Незначительное снижение (из-за риска переобучения)")
-print("   - Скорость: Замедление в 1.5-2 раза (больше параметров)")
-print("   - Параметров: ~22 млн (было ~10-12 млн)")
-print("📌 Рекомендация: Для данной задачи оптимально использовать 2 слоя LSTM")
+
+'''Влияние увеличения количества слоев LSTM с 2 до 4:
+1. ТОЧНОСТЬ:
+   - Больше слоев → модель может выявлять более сложные паттерны в тексте
+   - Увеличение параметров → потенциально более высокая точность на обучающей выборке
+   - Риск переобучения возрастает, требуется регуляризация (dropout)
+
+2. СКОРОСТЬ ОБУЧЕНИЯ:
+   - Увеличивается количество параметров (примерно в 2 раза)
+   - Больше матричных операций → дольше каждая эпоха
+   - Увеличивается время прямого и обратного прохода
+
+3. РЕКОМЕНДАЦИИ:
+   - Для небольших датасетов (как наш) 4 слоя могут быть избыточны
+   - Для больших объемов текста (100k+ отзывов) 4 слоя дадут улучшение
+   - Оптимальное количество слоев подбирается экспериментально '''
